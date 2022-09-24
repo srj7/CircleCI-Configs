@@ -1,0 +1,92 @@
+#CircleCI config for beginers that Buid the docker imsge for 2 seperate environaments and deploys it in two different servers. 
+#Set environment variables as secrets and add SSH key in CircleCI.
+#The config has a hold and approval for stopping automatic deployment.
+#This config can be used in any docker app regardeless of the framework.
+#Script.sh and docker-compose.yml has to be in root directory of your server, or you can modify the script and add docker run command
+
+#script.sh
+# docker-compose -f /home/ubuntu/docker-compose.yml up --force-recreate -d
+# yes y | docker system prune -a --filter "until=2h"
+# echo "Check STATUS in the below table to verify deployment"
+# docker ps
+
+
+version: 2.1
+orbs:
+  docker: circleci/docker@2.1.2
+executors:
+  docker-publisher:
+    environment:
+      IMAGE_NAME: imagerepo/imagename:tag
+      IMAGE_NAME: imagerepo/imagenameQA:tag
+    docker:
+      - image: cimg/base:stable
+        auth:
+            username: $DOCKERHUB_USERNAME
+            password: $DOCKERHUB_PASSWORD
+jobs:
+  PublishTo-Development-Hub:
+      executor: docker-publisher
+      steps:
+        - checkout
+        - setup_remote_docker:
+            version: 19.03.13
+        - run:
+            name: Publish Docker Image to Docker Hub
+            command: |
+              echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+              docker build -t $IMAGE_NAME .
+              docker push $IMAGE_NAME
+  DeployTo-Development:
+      docker:
+        - image: cimg/base:stable
+      steps:
+        - checkout
+        - run:
+            name: "Deploying to Dev server"
+            command:
+              ssh -o StrictHostKeyChecking=no username@publicIP \ ./script.sh
+
+  PublishTo-QA-Hub:
+    executor: docker-publisher
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+      - run:
+          name: Publish Docker Image to Docker Hub
+          command: |
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            docker build -t $IMAGE_NAMEQA .
+            docker push $IMAGE_NAMEQA
+  DeployTo-QA:
+      docker:
+        - image: cimg/base:stable
+      steps:
+        - checkout
+        - run:
+            name: "Deploying to QA server"
+            command:
+              ssh -o StrictHostKeyChecking=no username@publicIP \ ./script.sh
+workflows:
+  version: 2
+  build-push:
+    jobs:
+      - Development-Server-approval:
+          type: approval
+      - PublishTo-Development-Hub:
+           context: DockerHub
+           requires:
+             - Development-Server-approval
+      - DeployTo-Development:
+           requires:
+             - PublishTo-Development-Hub
+      - QA-Server-approval:
+          type: approval
+      - PublishTo-QA-Hub:
+           context: DockerHub
+           requires:
+             - QA-Server-approval
+      - DeployTo-QA:
+           requires:
+             - PublishTo-QA-Hub
